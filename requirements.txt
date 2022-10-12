@@ -4,8 +4,6 @@ cached-property==1.5.2
 certifi==2021.5.30
 charset-normalizer==2.0.12
 colorama==0.4.5
--e git+https://github.com/seungjun-Park/diffusion@d33f7dc93184f49a9c61d009bfe544d41b44e64c#egg=compressai&subdirectory=compressai-master
-cycler @ file:///tmp/build/80754af9/cycler_1637851556182/work
 dataclasses==0.8
 einops==0.4.1
 fairscale==0.4.6
@@ -20,27 +18,20 @@ importlib-metadata==4.8.3
 importlib-resources==5.4.0
 Keras-Applications==1.0.8
 Keras-Preprocessing==1.1.2
-kiwisolver @ file:///C:/ci/kiwisolver_1612282446297/work
 labml==0.4.160
 labml-helpers==0.4.89
 labml-nn==0.4.133
 Markdown==3.3.7
-matplotlib @ file:///C:/ci/matplotlib-suite_1613408055530/work
-mkl-fft==1.3.0
-mkl-random==1.1.1
-mkl-service==2.3.0
 numpy==1.19.5
 olefile==0.46
 Pillow==8.4.0
 protobuf==3.19.6
 pybind11==2.10.0
 pyparsing==3.0.9
-python-dateutil @ file:///tmp/build/80754af9/python-dateutil_1626374649649/work
 pytorch-msssim==0.2.1
 PyYAML==6.0
 requests==2.27.1
 scipy==1.5.4
-six @ file:///tmp/build/80754af9/six_1644875935023/work
 smmap==5.0.0
 tensorboard==1.14.0
 tensorflow-estimator==1.14.0
@@ -48,7 +39,6 @@ termcolor==1.1.0
 torch==1.10.2
 torchtext==0.11.2
 torchvision==0.11.3
-tornado @ file:///C:/ci/tornado_1606942379977/work
 tqdm==4.64.1
 typing_extensions==4.1.1
 urllib3==1.26.12
