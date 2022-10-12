@@ -14,10 +14,6 @@ google-pasta==0.2.0
 grpcio==1.48.2
 h5py==3.1.0
 idna==3.4
-importlib-metadata==4.8.3
-importlib-resources==5.4.0
-Keras-Applications==1.0.8
-Keras-Preprocessing==1.1.2
 labml==0.4.160
 labml-helpers==0.4.89
 labml-nn==0.4.133
