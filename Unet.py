@@ -217,5 +217,5 @@ class UNet(Module):
                 s = h.pop()
                 x = torch.cat((x, s), dim=1)
                 x = m(x, t)
-                
+
         return self.final(self.act(self.norm(x)))
