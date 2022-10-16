@@ -3,13 +3,14 @@ import warnings
 
 import torch
 import torch.nn as nn
-import torch.functional as F
+import torch.nn.functional as F
 
 from compressai.entropy_models import EntropyBottleneck, GaussianConditional
 from compressai.layers import GDN, MaskedConv2d
 from compressai.registry import register_model
 
 from compressai.models.utils import conv, deconv, update_registered_buffers
+
 
 class CompressionModel(nn.Module):
     """Base class for constructing an auto-encoder with at least one entropy
