@@ -15,7 +15,7 @@ import lpips
 class DiffusionCompression(nn.Module):
     def __init__(self, N, M, entropy_bottleneck_channels,   # for compression
                  noise_model: UNetModel,
-                 n_steps: int, linear_start: float, linear_end: float,
+                 n_steps: int, linear_start: float, linear_end: float, step_range: int = 1,
                  discretize: str = "uniform", eta: float = 0.,
                  lamda: float = 1., lo: float = 0.9):
         super(DiffusionCompression, self).__init__()
@@ -66,7 +66,7 @@ class DiffusionCompression(nn.Module):
         self.noise_model = noise_model
 
         if discretize == "uniform":
-            c = self.n_steps // n_steps
+            c = self.n_steps // step_range
             self.time_steps = np.asarray(list(range(0, self.n_steps, c))) + 1
 
         elif discretize == "quad":
