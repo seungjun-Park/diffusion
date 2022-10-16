@@ -1,6 +1,6 @@
 import os
 import torchvision
-from torchvision.transforms import ToTensor
+from torchvision.transforms import transforms
 import torch.nn.functional as F
 import torch.nn as nn
 import torch
@@ -14,6 +14,7 @@ import time
 from diffusion_compression import DiffusionCompression
 from torch.utils.tensorboard import SummaryWriter
 from labml_nn.diffusion.stable_diffusion.model.unet import UNetModel
+
 
 def run_inference(device="cpu", test_dir="test", model_dir=""):
     return
@@ -29,12 +30,18 @@ def run_training(
         diff_pth="",
         ckpt_interval=1
     ):
+
+    preprocessing = transforms.Compose([
+        transforms.Resize((600, 600)),
+        transforms.ToTensor(),
+    ])
+
     print("Using device: {}".format(device))
 
     save_pth_dir = save_dir + "{}/{}/".format(batch_size, lr)
     print("model params will be saved to: {}".format(save_pth_dir))
 
-    train_ds = torchvision.datasets.ImageFolder(train_dir, transform=ToTensor())
+    train_ds = torchvision.datasets.ImageFolder(train_dir, transform=preprocessing)
     train_loader = data.DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     train_size = len(train_ds)
     print("Number of train samples: ", train_size)
