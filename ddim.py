@@ -19,7 +19,7 @@ class DDIM(DiffusionSampler):
             self.time_steps = np.asarray(list(range(0, self.n_steps, c))) + 1
 
         elif ddim_discretize == "quad":
-            self.time_steps = ((np.linspace(0, np.sqrt(self.n_steps * .8))) ** 2).astyp(int) + 1
+            self.time_steps = ((np.linspace(0, np.sqrt(self.n_steps * .8))) ** 2).astype(int) + 1
 
         else:
             raise NotImplementedError(ddim_discretize)
@@ -64,11 +64,11 @@ class DDIM(DiffusionSampler):
     def p_sample(self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor, step: int, index: int, *,
                  repeat_noise: bool = False,
                  temperature: float = 1.,
-                 uncond_sacle: float = 1.,
+                 uncond_scale: float = 1.,
                  uncond_cond: Optional[torch.Tensor] = None):
 
         e_t = self.get_eps(x, t, c,
-                           uncond_sacle=uncond_sacle,
+                           uncond_scale=uncond_scale,
                            uncond_cond=uncond_cond)
 
         x_prev, pred_x0 = self.get_x_prev_and_pred_x0(e_t, index, x,
