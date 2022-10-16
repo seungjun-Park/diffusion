@@ -1,46 +1,29 @@
 from typing import List, Optional
-
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.functional as F
 import torch.utils.data
-
 from compressai.entropy_models import EntropyBottleneck
 from compressai.layers import GDN
 from compressai.models.utils import conv, deconv
-
 from labml import monit
 from labml_nn.diffusion.stable_diffusion.model.unet import UNetModel
-
 import lpips
-
-from labml_nn.diffusion.stable_diffusion.model.unet import UNetModel
 
 
 class DiffusionCompression(nn.Module):
     def __init__(self, N, M, entropy_bottleneck_channels,   # for compression
                  noise_model: UNetModel,
-<<<<<<< Updated upstream
                  n_steps: int, linear_start: float, linear_end: float,
                  discretize: str = "uniform", eta: float = 0.,
                  lamda: float = 1., lo: float = 0.9):
-=======
-                 n_steps: int, linear_start: float, linear_end: float, latent_scaling_factor,
-                 discretize: str = "uniform", eta: float = 0):
->>>>>>> Stashed changes
         super(DiffusionCompression, self).__init__()
 
         self.entropy_bottleneck = EntropyBottleneck(entropy_bottleneck_channels)
 
-<<<<<<< Updated upstream
         self.lamda = lamda
         self.lo = lo
-=======
-        self.lamda: int = 1.0
-        self.lo: int = 0.9
-        self.learning_rate: int
->>>>>>> Stashed changes
 
         self.g_a = nn.Sequential(
             conv(3, N),
@@ -60,7 +43,6 @@ class DiffusionCompression(nn.Module):
             conv(N, N),
         )
 
-<<<<<<< Updated upstream
         self.g_s = nn.Sequential(
             deconv(M, N),
             GDN(N, inverse=True),
@@ -80,8 +62,6 @@ class DiffusionCompression(nn.Module):
         )
 
 
-=======
->>>>>>> Stashed changes
         self.n_steps = n_steps
         self.noise_model = noise_model
 
@@ -123,27 +103,6 @@ class DiffusionCompression(nn.Module):
         e_t_uncond, e_t_cond = self.model(x_in, t_in, c_in).chunk(2)
 
         e_t = e_t_uncond + uncond_scale * (e_t_cond - e_t_uncond)
-<<<<<<< Updated upstream
-=======
-
-        return e_t
-
-    def q_sample(self, x0: torch.Tensor, index: int, noise: Optional[torch.Tensor] = None):
-        if noise is None:
-            noise = torch.randn_like(x0)
-
-        return self.alpha_sqrt[index] * x0 + self.sqrt_one_minus_alpha[index] * noise
-
-    def p_sample(self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor, step: int, index: int, *,
-                 repeat_noise: bool = False,
-                 temperature: float = 1.,
-                 uncond_scale: float = 1.,
-                 uncond_cond: Optional[torch.Tensor] = None):
-        e_t = self.get_noise(x, t, c,
-                             uncond_scale=uncond_scale,
-                             uncond_cond=uncond_cond)
-
->>>>>>> Stashed changes
 
         return e_t
 
@@ -243,7 +202,6 @@ class DiffusionCompression(nn.Module):
             z_strings = self.entropy_bottleneck.compress(z)
             z_hat = self.entropy_bottleneck.decompress(z_strings, z.size()[-2:])
 
-<<<<<<< Updated upstream
             y_noise = torch.randn_like(y0)
             time_steps = np.flip(self.time_steps)[skip_steps:]
 
@@ -257,6 +215,3 @@ class DiffusionCompression(nn.Module):
                                                       uncond_cond=uncond_cond)
             x_hat = self.g_s(pred_y0).clamp(0, 1)
             return x_hat
-=======
-        return
->>>>>>> Stashed changes
