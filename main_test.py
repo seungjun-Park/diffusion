@@ -11,10 +11,11 @@ import matplotlib.pyplot as plt
 from torch.utils.data import random_split
 from tqdm import tqdm
 import time
-from diffusion_compression import DiffusionCompression
 from torch.utils.tensorboard import SummaryWriter
-from labml_nn.diffusion.stable_diffusion.model.unet import UNetModel
 
+from model.diffusion.ddpm import DDPM
+from labml_nn.diffusion.ddpm.unet import UNet
+from typing import List
 
 def run_inference(device="cpu", test_dir="test", model_dir=""):
     return
@@ -22,7 +23,7 @@ def run_inference(device="cpu", test_dir="test", model_dir=""):
 
 def run_training(
         device="cpu",
-        train_dir="train",
+        train_dir="data",
         save_dir="model_params/",
         n_epochs=100,
         batch_size=5,
@@ -32,7 +33,8 @@ def run_training(
     ):
 
     preprocessing = transforms.Compose([
-        transforms.Resize((600, 600)),
+        transforms.Grayscale(),
+        transforms.Resize((512, 512)),
         transforms.ToTensor(),
     ])
 
@@ -46,12 +48,28 @@ def run_training(
     train_size = len(train_ds)
     print("Number of train samples: ", train_size)
 
+    image_channels: int = 1
+    image_size: int = 512
+
+    n_channels: int = 512
+    channel_multipliers: List[int] = [1, 2, 3, 4]
+
+    is_attention: List[int] = [False, False, False, True]
+
+    n_steps: int = 1_000
+    batch_size: int = 64
+    n_samples: int = 16
+
 
     # Define Model
-    noise_model = UNetModel(in_channels=3, out_channels=3, channels=128, n_res_blocks=2,
-                            attention_levels=[1, 4], channel_multipliers=[1, 1, 2, 2, 4, 4], n_heads=2) # nheads 모름
-    model = DiffusionCompression(N=128, M=256, entropy_bottleneck_channels=64, noise_model=noise_model,
-                                 n_steps=100, linear_start=1e-4, linear_end=2e-2).to(device)
+    unet_model = UNet(image_channels=image_channels,
+            n_channels=n_channels,
+            ch_mults=channel_multipliers,
+            is_attn=is_attention)
+
+    model = DDPM(eps_model=unet_model,
+                 n_steps=n_steps,
+                 device=torch.device(device))
 
 
     # Adam Optimizer
@@ -84,12 +102,22 @@ def run_training(
             torch.save(model.state_dict(), save_pth_dir + "diffusion_{}.pth".format(epoch + 1))
 
 
+    # x = torch.randn([n_samples, image_channels, image_size, image_size],
+    #                 device=torch.device(device))
+    #
+    # for t_ in range(0, n_steps):
+    #     t = n_steps - t_ - 1
+    #     x = model.p_sample(x, x.new_full((n_samples,), t, dtype=torch.long))
+    #
+    # tracker.save('sample', x)
+
+
 if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     configs = {
         "device": device,
-        "train_dir": "train",
+        "train_dir": "data",
         "save_dir": "model_params/",
         "n_epochs": 100,
         "batch_size": 5,

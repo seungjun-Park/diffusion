@@ -5,7 +5,7 @@ from torchvision.transforms.functional import to_pil_image, resize
 
 from labml import experiment, monit
 from labml_nn.diffusion.ddpm import DenoiseDiffusion, gather
-from labml_nn.diffusion.ddpm.experiment import Configs
+from train_ddpm import Configs
 
 class Sampler:
     def __init__(self, diffusion: DenoiseDiffusion, image_channels: int, image_size: int, device: torch.device):

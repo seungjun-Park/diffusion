@@ -13,7 +13,7 @@ import lpips
 
 
 class DiffusionCompression(nn.Module):
-    def __init__(self, N, M, entropy_bottleneck_channels,   # for compression
+    def __init__(self, image_channel, N, M, entropy_bottleneck_channels,   # for compression
                  noise_model: UNetModel,
                  n_steps: int, linear_start: float, linear_end: float, step_range: int = 1,
                  discretize: str = "uniform", eta: float = 0.,
@@ -26,7 +26,7 @@ class DiffusionCompression(nn.Module):
         self.lo = lo
 
         self.g_a = nn.Sequential(
-            conv(3, N),
+            conv(image_channel, N),
             GDN(N),
             conv(N, N),
             GDN(N),
@@ -50,7 +50,7 @@ class DiffusionCompression(nn.Module):
             GDN(N, inverse=True),
             deconv(N, N),
             GDN(N, inverse=True),
-            deconv(N, 3),
+            deconv(N, image_channel),
         )
 
         self.h_s = nn.Sequential(
@@ -171,7 +171,7 @@ class DiffusionCompression(nn.Module):
         for i, step in monit.enum('Sample', time_steps):
             index = len(time_steps) - i - 1
             ts = x.new_full((y0.shape[0],), step, dtype=torch.long)
-            y_prev, pred_y0, e_t = self.p_sample(y_noise, z_hat, ts, step, index=index,
+            y_prev, pred_y0, e_t = self.p_sample(y_noise, None, ts, step, index=index,
                                                  repeat_noise=repeat_noise,
                                                  temperature=temperature,
                                                  uncond_scale=uncond_scale,
@@ -208,7 +208,7 @@ class DiffusionCompression(nn.Module):
             for i, step in monit.enum('Sample', time_steps):
                 index = len(time_steps) - i - 1
                 ts = x.new_full((y0.shape[0],), step, dtype=torch.long)
-                y_noise, pred_y0, e_t = self.p_sample(y_noise, z_hat, ts, step, index=index,
+                y_noise, pred_y0, e_t = self.p_sample(y_noise, None, ts, step, index=index,
                                                       repeat_noise=repeat_noise,
                                                       temperature=temperature,
                                                       uncond_scale=uncond_scale,

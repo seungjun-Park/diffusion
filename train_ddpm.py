@@ -28,7 +28,7 @@ class Configs(BaseConfigs):
     n_steps: int = 1_000
     batch_size: int = 64
     n_samples: int = 16
-    learning_rate: float = 23-5
+    learning_rate: float = 2e-5
     epochs: int = 1_000
 
     dataset: torch.utils.data.Dataset
@@ -87,7 +87,7 @@ class CelebADataset(torch.utils.data.Dataset):
         super(CelebADataset, self).__init__()
 
         folder = lab.get_data_path() / 'celebA'
-        self._files = [p for p in folder.glob(f'***/*.jpg')]
+        self._files = [p for p in folder.glob(f'**/*.jpg')]
         self._transform = torchvision.transforms.Compose([
             torchvision.transforms.Resize(image_size),
             torchvision.transforms.ToTensor(),
@@ -111,7 +111,7 @@ class MNISTDataset(torchvision.datasets.MNIST):
             torchvision.transforms.ToTensor(),
         ])
 
-        super(MNISTDataset, self).__init__(str(lab.get_data_path()), train=True, transform=transform)
+        super(MNISTDataset, self).__init__(str(lab.get_data_path()), train=True, transform=transform, download=True)
 
     def __getitem__(self, item):
         return super(MNISTDataset, self).__getitem__(item)[0]
@@ -124,9 +124,9 @@ def main():
     experiment.create(name='diffuse', writers={'screen', 'labml'})
     configs = Configs()
     experiment.configs(configs, {
-        'dataset': 'CelebA',    # 'MNIST'
-        'image_channels': 3,    # 1
-        'epochs': 100,          # 5
+        'dataset': 'MNIST',
+        'image_channels': 1,
+        'epochs': 5
     })
 
     configs.init()

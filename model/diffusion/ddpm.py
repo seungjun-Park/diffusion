@@ -7,7 +7,7 @@ import torch.utils.data
 
 from labml_nn.diffusion.ddpm.utils import gather
 
-class DDPM:
+class DDPM(nn.Module):
     def __init__(self, eps_model: nn.Module, n_steps: int, device: torch.device):
         super().__init__()
         self.eps_model = eps_model                                       # noise generator
