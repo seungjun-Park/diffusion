@@ -8,25 +8,26 @@ from compressai.entropy_models import EntropyBottleneck
 from compressai.layers import GDN
 from compressai.models.utils import conv, deconv
 from labml import monit
-from labml_nn.diffusion.stable_diffusion.model.unet import UNetModel
 import lpips
 
 
-class DiffusionCompression(nn.Module):
-    def __init__(self, image_channel, N, M, entropy_bottleneck_channels,   # for compression
-                 noise_model: UNetModel,
-                 n_steps: int, linear_start: float, linear_end: float, step_range: int = 1,
-                 discretize: str = "uniform", eta: float = 0.,
-                 lamda: float = 1., lo: float = 0.9):
-        super(DiffusionCompression, self).__init__()
+class LDCM(nn.Module):
+    def __init__(self, config):
+        super(LDCM, self).__init__()
 
-        self.entropy_bottleneck = EntropyBottleneck(entropy_bottleneck_channels)
+        self.config = config
 
-        self.lamda = lamda
-        self.lo = lo
+        self.lamda = config['lambda']
+        self.lo = config['lo']
+        in_channel = config['in_channel']
+        out_channel = config['out channel']
+        N = config['N']
+        M = config['M']
+
+        self.entropy_bottleneck = EntropyBottleneck(config['entropy_bottleneck_channels'])
 
         self.g_a = nn.Sequential(
-            conv(image_channel, N),
+            conv(in_channel, N),
             GDN(N),
             conv(N, N),
             GDN(N),
@@ -50,7 +51,7 @@ class DiffusionCompression(nn.Module):
             GDN(N, inverse=True),
             deconv(N, N),
             GDN(N, inverse=True),
-            deconv(N, image_channel),
+            deconv(N, out_channel),
         )
 
         self.h_s = nn.Sequential(
@@ -62,8 +63,8 @@ class DiffusionCompression(nn.Module):
         )
 
 
-        self.n_steps = n_steps
-        self.noise_model = noise_model
+        self.n_steps =
+        self.eps_model =
 
         if discretize == "uniform":
             c = self.n_steps // step_range

@@ -22,7 +22,7 @@ def run_inference(device="cpu", test_dir="test", model_dir=""):
 
 
 def run_training(
-        device="cpu",
+        device: torch.device,
         train_dir="data",
         save_dir="model_params/",
         n_epochs=100,
@@ -34,7 +34,7 @@ def run_training(
 
     preprocessing = transforms.Compose([
         transforms.Grayscale(),
-        transforms.Resize((512, 512)),
+        transforms.Resize((256, 256)),
         transforms.ToTensor(),
     ])
 
@@ -49,9 +49,9 @@ def run_training(
     print("Number of train samples: ", train_size)
 
     image_channels: int = 1
-    image_size: int = 512
+    image_size: int = 256
 
-    n_channels: int = 512
+    n_channels: int = 64
     channel_multipliers: List[int] = [1, 2, 3, 4]
 
     is_attention: List[int] = [False, False, False, True]
@@ -65,11 +65,11 @@ def run_training(
     unet_model = UNet(image_channels=image_channels,
             n_channels=n_channels,
             ch_mults=channel_multipliers,
-            is_attn=is_attention)
+            is_attn=is_attention).to(device)
 
     model = DDPM(eps_model=unet_model,
                  n_steps=n_steps,
-                 device=torch.device(device))
+                 device=torch.device)
 
 
     # Adam Optimizer
