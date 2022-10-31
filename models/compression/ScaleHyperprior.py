@@ -6,7 +6,7 @@ from compressai.entropy_models import GaussianConditional
 from compressai.layers import GDN
 from compressai.models.utils import conv, deconv, update_registered_buffers
 
-from CompressionModel import CompressionModel
+from models.a.CompressionModel import CompressionModel
 
 # From Balle's tensorflow compression examples
 SCALES_MIN = 0.11

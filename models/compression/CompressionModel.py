@@ -1,5 +1,4 @@
 import warnings
-
 import torch.nn as nn
 
 from compressai.entropy_models import EntropyBottleneck
