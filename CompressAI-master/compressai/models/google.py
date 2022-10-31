@@ -134,7 +134,7 @@ class FactorizedPrior(CompressionModel):
         super().__init__(entropy_bottleneck_channels=M, **kwargs)
 
         self.g_a = nn.Sequential(
-            conv(3, N),
+            conv(1, N),
             GDN(N),
             conv(N, N),
             GDN(N),
@@ -150,7 +150,7 @@ class FactorizedPrior(CompressionModel):
             GDN(N, inverse=True),
             deconv(N, N),
             GDN(N, inverse=True),
-            deconv(N, 3),
+            deconv(N, 1),
         )
 
         self.N = N
@@ -220,7 +220,7 @@ class ScaleHyperprior(CompressionModel):
         super().__init__(entropy_bottleneck_channels=N, **kwargs)
 
         self.g_a = nn.Sequential(
-            conv(3, N),
+            conv(1, N),
             GDN(N),
             conv(N, N),
             GDN(N),
@@ -236,7 +236,7 @@ class ScaleHyperprior(CompressionModel):
             GDN(N, inverse=True),
             deconv(N, N),
             GDN(N, inverse=True),
-            deconv(N, 3),
+            deconv(N, 1),
         )
 
         self.h_a = nn.Sequential(
