@@ -16,6 +16,7 @@ class LDCM(nn.Module):
         super(LDCM, self).__init__()
 
         self.config = config
+        self.device = torch.device(config['device'])
 
         self.lamda = config['lambda']
         self.lo = config['lo']
@@ -63,8 +64,8 @@ class LDCM(nn.Module):
         )
 
 
-        self.n_steps =
-        self.eps_model =
+        self.n_steps = config['n_steps']
+        self.eps_model = UNet(config['UNet'])
 
         if discretize == "uniform":
             c = self.n_steps // step_range
@@ -86,9 +87,6 @@ class LDCM(nn.Module):
         self.alpha_prev = torch.cat([alpha_bar[0 : 1], alpha_bar[self.time_steps[ : -1]]])
         self.sigma = (eta * ((1 - self.alpha_prev) / (1 - self.alpha) * (1 - self.alpha / self.alpha_prev)) ** .5)
         self.sqrt_one_minus_alpha = (1. - self.alpha) ** .5
-
-    def device(self):
-        return next(iter(self.noise_model.parameters())).device()
 
     def get_noise(self, x: torch.Tensor, t: torch.Tensor, c: torch.Tensor, *,
                   uncond_scale: float, uncond_cond: Optional[torch.Tensor] = None):

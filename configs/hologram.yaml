@@ -1,2 +1,37 @@
-ldcm:
+diffusion:
+  model: model.diffusion.ldcm.LDCM
+  base_learning_rate: 2.0e-6
+  params:
+    linear_start: 0.0015
+    linear_end: 0.0195
+    num_timesteps_cond: 1
+    log_every_t: 200
+    timesteps: 1000
+    #first_stage_key: image
+    image_size: 64
+    channels: 3
+    monitor: val/loss_simple_ema
+
+unet:
+  model: utils.CUNet.CUNet
+  image_size: 256
+  in_channels: 3
+  out_channels: 3
+  model_channels: 224
+  attention_resolution:
+  - 8
+  - 4
+  - 2
+  num_res_block: 2
+  channel_mult:
+  - 1
+  - 2
+  - 3
+  - 4
+  num_head_channels: 32
+
+compression:
   model:
+
+
+
