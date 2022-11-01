@@ -1,216 +1,291 @@
-from typing import List, Optional
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.functional as F
-import torch.utils.data
-from compressai.entropy_models import EntropyBottleneck
-from compressai.layers import GDN
-from compressai.models.utils import conv, deconv
-from labml import monit
-import lpips
+import torch.nn.functional as F
+import os
+import time
+import logging
 
+import numpy as np
+
+from modules.ddim.unet import UNet
+from modules.ddim.ema import EMAHelper
+from modules.ddim.losses import noise_estimation_loss
+
+def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_timesteps):
+    def sigmoid(x):
+        return 1 / (np.exp(-x) + 1)
+
+    if beta_schedule == "quad":
+        betas = (
+            np.linspace(
+                beta_start ** 0.5,
+                beta_end ** 0.5,
+                num_diffusion_timesteps,
+                dtype=np.float64,
+            )
+            ** 2
+        )
+    elif beta_schedule == "linear":
+        betas = np.linspace(
+            beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64
+        )
+    elif beta_schedule == "const":
+        betas = beta_end * np.ones(num_diffusion_timesteps, dtype=np.float64)
+    elif beta_schedule == "jsd":  # 1/T, 1/(T-1), 1/(T-2), ..., 1
+        betas = 1.0 / np.linspace(
+            num_diffusion_timesteps, 1, num_diffusion_timesteps, dtype=np.float64
+        )
+    elif beta_schedule == "sigmoid":
+        betas = np.linspace(-6, 6, num_diffusion_timesteps)
+        betas = sigmoid(betas) * (beta_end - beta_start) + beta_start
+    else:
+        raise NotImplementedError(beta_schedule)
+    assert betas.shape == (num_diffusion_timesteps,)
+    return betas
 
 class LDCM(nn.Module):
-    def __init__(self, config):
+    def __init__(self, lr=0.0001, model_var_type='fixedsmall',
+                 beta_schedule='linear', beta_start=0.0001, beta_end=0.02, time_step=100,
+                 device=None):
         super(LDCM, self).__init__()
 
-        self.config = config
-        self.device = torch.device(config['device'])
+        if device is None:
+            device = (
+                torch.device("cuda")
+                if torch.cuda.is_available()
+                else torch.device("cpu")
+            )
+        self.device = device
+        self.model_var_type = model_var_type
+        self.lr = lr
 
-        self.lamda = config['lambda']
-        self.lo = config['lo']
-        in_channel = config['in_channel']
-        out_channel = config['out channel']
-        N = config['N']
-        M = config['M']
+        betas = get_beta_schedule(
+            beta_schedule=beta_schedule,
+            beta_start=beta_start,
+            beta_end=beta_end,
+            num_diffusion_timesteps=time_step
+        )
+        betas = self.betas = torch.from_numpy(betas).float().to(self.device)
+        self.time_steps = betas.shape[0]
 
-        self.entropy_bottleneck = EntropyBottleneck(config['entropy_bottleneck_channels'])
-
-        self.g_a = nn.Sequential(
-            conv(in_channel, N),
-            GDN(N),
-            conv(N, N),
-            GDN(N),
-            conv(N, N),
-            GDN(N),
-            conv(N, M),
+        alphas = 1.0 - betas
+        alphas_cumprod = alphas.cumprod(dim=0)
+        alphas_cumprod_prev = torch.cat(
+            [torch.ones(1).to(device), alphas_cumprod[:-1]], dim=0
+        )
+        posterior_variance = (
+                betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
         )
 
-        self.h_a = nn.Sequential(
-            conv(M, N, stride=1, kernel_size=3),
-            nn.LeakyReLU(inplace=True),
-            conv(N, N),
-            nn.LeakyReLU(inplace=True),
-            conv(N, N),
+        if self.model_var_type == "fixedlarge":
+            self.logvar = betas.log()
+            # torch.cat(
+            # [posterior_variance[1:2], betas[1:]], dim=0).log()
+        elif self.model_var_type == "fixedsmall":
+            self.logvar = posterior_variance.clamp(min=1e-20).log()
+
+    def train_model(self, path,
+              ch, out_ch, ch_mult,
+              num_res_blocks,
+              attn_resolutions,
+              dropout,
+              in_channels,
+              image_size,
+              resamp_with_conv,
+              timesteps,
+              model_type='bayesian'):
+
+        model = UNet(
+            ch, out_ch, ch_mult,
+            num_res_blocks,
+            attn_resolutions,
+            dropout,
+            in_channels,
+            image_size,
+            resamp_with_conv,
+            timesteps,
+            model_type=model_type
         )
+        model = model.to(self.device)
 
-        self.g_s = nn.Sequential(
-            deconv(M, N),
-            GDN(N, inverse=True),
-            deconv(N, N),
-            GDN(N, inverse=True),
-            deconv(N, N),
-            GDN(N, inverse=True),
-            deconv(N, out_channel),
-        )
+        optimizer = torch.optim.Adam(model.parameters(), lr=self.lr)
 
-        self.h_s = nn.Sequential(
-            deconv(N, M),
-            nn.LeakyReLU(inplace=True),
-            deconv(M, M * 3 // 2),
-            nn.LeakyReLU(inplace=True),
-            conv(M * 3 // 2, M * 2, stride=1, kernel_size=3),
-        )
-
-
-        self.n_steps = config['n_steps']
-        self.eps_model = UNet(config['UNet'])
-
-        if discretize == "uniform":
-            c = self.n_steps // step_range
-            self.time_steps = np.asarray(list(range(0, self.n_steps, c))) + 1
-
-        elif discretize == "quad":
-            self.time_steps = ((np.linspace(0, np.sqrt(self.n_steps * 0.8))) ** 2).astype(int) + 1
-
+        if self.config.model.ema:
+            ema_helper = EMAHelper(mu=self.config.model.ema_rate)
+            ema_helper.register(model)
         else:
-            raise NotImplementedError(discretize)
+            ema_helper = None
 
-        beta = torch.linspace(linear_start ** 0.5, linear_end ** 0.5, n_steps, dtype=torch.float64) ** 2
-        self.beta = nn.Parameter(beta.to(torch.float32), requires_grad=False)
-        alpha = 1. - beta
-        alpha_bar = torch.cumprod(alpha, dim=0)
-        self.alpha_bar = nn.Parameter(alpha_bar.to(torch.float32), requires_grad=False)
-        self.alpha = self.alpha_bar[self.time_steps].clone().to(torch.float32)
-        self.alpha_sqrt = torch.sqrt(self.alpha)
-        self.alpha_prev = torch.cat([alpha_bar[0 : 1], alpha_bar[self.time_steps[ : -1]]])
-        self.sigma = (eta * ((1 - self.alpha_prev) / (1 - self.alpha) * (1 - self.alpha / self.alpha_prev)) ** .5)
-        self.sqrt_one_minus_alpha = (1. - self.alpha) ** .5
+        start_epoch, step = 0, 0
+        if self.args.resume_training:
+            states = torch.load(os.path.join(self.args.log_path, "ckpt.pth"))
+            model.load_state_dict(states[0])
 
-    def get_noise(self, x: torch.Tensor, t: torch.Tensor, c: torch.Tensor, *,
-                  uncond_scale: float, uncond_cond: Optional[torch.Tensor] = None):
+            states[1]["param_groups"][0]["eps"] = self.config.optim.eps
+            optimizer.load_state_dict(states[1])
+            start_epoch = states[2]
+            step = states[3]
+            if self.config.model.ema:
+                ema_helper.load_state_dict(states[4])
 
-        if uncond_cond is None or uncond_scale == 1.:
-            return self.noise_model(x, t, c)
+        for epoch in range(start_epoch, self.config.training.n_epochs):
+            data_start = time.time()
+            data_time = 0
+            for i, (x, y) in enumerate(train_loader):
+                n = x.size(0)
+                data_time += time.time() - data_start
+                model.train()
+                step += 1
 
-        x_in = torch.cat([x] * 2)
-        t_in = torch.cat([t] * 2)
+                x = x.to(self.device)
+                e = torch.randn_like(x)
+                b = self.betas
 
-        c_in = torch.cat([uncond_cond, c])
+                # antithetic sampling
+                t = torch.randint(
+                    low=0, high=self.num_timesteps, size=(n // 2 + 1,)
+                ).to(self.device)
+                t = torch.cat([t, self.num_timesteps - t - 1], dim=0)[:n]
+                loss = noise_estimation_loss(model, x, t, e, b)
 
-        e_t_uncond, e_t_cond = self.model(x_in, t_in, c_in).chunk(2)
+                tb_logger.add_scalar("loss", loss, global_step=step)
 
-        e_t = e_t_uncond + uncond_scale * (e_t_cond - e_t_uncond)
+                logging.info(
+                    f"step: {step}, loss: {loss.item()}, data time: {data_time / (i+1)}"
+                )
 
-        return e_t
+                optimizer.zero_grad()
+                loss.backward()
 
-    def get_x_prev_and_pred_x0(self, e_t: torch.Tensor, index: int, x: torch.Tensor, *,
-                               temperature: float,
-                               repeat_noise: bool):
-        alpha = self.alpha[index]
-        alpha_prev = self.alpha_prev[index]
-        sigma = self.sigma[index]
-        sqrt_one_minus_alpha = self.sqrt_one_minus_alpha[index]
-        pred_x0 = (x - sqrt_one_minus_alpha * e_t) / (alpha ** 0.5)
-        dir_xt = (1. - alpha_prev - sigma ** 2).sqrt() * e_t
+                try:
+                    torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), config.optim.grad_clip
+                    )
+                except Exception:
+                    pass
+                optimizer.step()
 
-        if sigma == 0:
-            noise = 0.
+                if self.config.model.ema:
+                    ema_helper.update(model)
 
-        elif repeat_noise:
-            noise = torch.randn(1, *x.shape[1:], device=x.device)
+                if step % self.config.training.snapshot_freq == 0 or step == 1:
+                    states = [
+                        model.state_dict(),
+                        optimizer.state_dict(),
+                        epoch,
+                        step,
+                    ]
+                    if self.config.model.ema:
+                        states.append(ema_helper.state_dict())
 
+                    torch.save(
+                        states,
+                        os.path.join(self.args.log_path, "ckpt_{}.pth".format(step)),
+                    )
+                    torch.save(states, os.path.join(self.args.log_path, "ckpt.pth"))
+
+                data_start = time.time()
+
+    def sample(self):
+        model = UNet()
+
+        if not self.args.use_pretrained:
+            if getattr(self.config.sampling, "ckpt_id", None) is None:
+                states = torch.load(
+                    os.path.join(self.args.log_path, "ckpt.pth"),
+                    map_location=self.config.device,
+                )
+            else:
+                states = torch.load(
+                    os.path.join(
+                        self.args.log_path, f"ckpt_{self.config.sampling.ckpt_id}.pth"
+                    ),
+                    map_location=self.config.device,
+                )
+            model = model.to(self.device)
+            model = torch.nn.DataParallel(model)
+            model.load_state_dict(states[0], strict=True)
+
+            if self.config.model.ema:
+                ema_helper = EMAHelper(mu=self.config.model.ema_rate)
+                ema_helper.register(model)
+                ema_helper.load_state_dict(states[-1])
+                ema_helper.ema(model)
+            else:
+                ema_helper = None
         else:
-            noise = torch.randn(x.shape, device=x.device)
+            # This used the pretrained DDPM model, see https://github.com/pesser/pytorch_diffusion
+            if self.config.data.dataset == "CIFAR10":
+                name = "cifar10"
+            elif self.config.data.dataset == "LSUN":
+                name = f"lsun_{self.config.data.category}"
+            else:
+                raise ValueError
+            ckpt = get_ckpt_path(f"ema_{name}")
+            print("Loading checkpoint {}".format(ckpt))
+            model.load_state_dict(torch.load(ckpt, map_location=self.device))
+            model.to(self.device)
+            model = torch.nn.DataParallel(model)
 
-        noise = noise * temperature
+        model.eval()
 
-        x_prev = (alpha_prev ** 0.5) * pred_x0 + dir_xt + sigma * noise
+        if self.args.fid:
+            self.sample_fid(model)
+        elif self.args.interpolation:
+            self.sample_interpolation(model)
+        elif self.args.sequence:
+            self.sample_sequence(model)
+        else:
+            raise NotImplementedError("Sample procedeure not defined")
 
-        return x_prev, pred_x0
+    def sample_image(self, x, model, last=True):
+        try:
+            skip = self.args.skip
+        except Exception:
+            skip = 1
 
-    def q_sample(self, x0: torch.Tensor, index: int, noise: Optional[torch.Tensor] = None):
-        if noise is None:
-            noise = torch.randn_like(x0)
+        if self.args.sample_type == "generalized":
+            if self.args.skip_type == "uniform":
+                skip = self.num_timesteps // self.args.timesteps
+                seq = range(0, self.num_timesteps, skip)
+            elif self.args.skip_type == "quad":
+                seq = (
+                    np.linspace(
+                        0, np.sqrt(self.num_timesteps * 0.8), self.args.timesteps
+                    )
+                    ** 2
+                )
+                seq = [int(s) for s in list(seq)]
+            else:
+                raise NotImplementedError
+            from modules.ddim.denoising import generalized_steps
 
-        return self.alpha_sqrt[index] * x0 + self.sqrt_one_minus_alpha[index] * noise
+            xs = generalized_steps(x, seq, model, self.betas, eta=self.args.eta)
+            x = xs
+        elif self.args.sample_type == "ddpm_noisy":
+            if self.args.skip_type == "uniform":
+                skip = self.num_timesteps // self.args.timesteps
+                seq = range(0, self.num_timesteps, skip)
+            elif self.args.skip_type == "quad":
+                seq = (
+                    np.linspace(
+                        0, np.sqrt(self.num_timesteps * 0.8), self.args.timesteps
+                    )
+                    ** 2
+                )
+                seq = [int(s) for s in list(seq)]
+            else:
+                raise NotImplementedError
+            from modules.ddim.denoising import ddpm_steps
 
-    def p_sample(self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor, step: int, index: int, *,
-                 repeat_noise: bool = False,
-                 temperature: float = 1.,
-                 uncond_scale: float = 1.,
-                 uncond_cond: Optional[torch.Tensor] = None):
+            x = ddpm_steps(x, seq, model, self.betas)
+        else:
+            raise NotImplementedError
+        if last:
+            x = x[0][-1]
+        return x
 
-        e_t = self.get_noise(x, t, c,
-                             uncond_scale=uncond_scale,
-                             uncond_cond=uncond_cond)
+    def test(self):
+        pass
 
-        x_prev, pred_x0 = self.get_x_prev_and_pred_x0(e_t, index, x,
-                                                      temperature=temperature,
-                                                      repeat_noise=repeat_noise)
 
-        return x_prev, pred_x0, e_t
-
-    def loss(self,
-             x: torch.Tensor, noise: torch.Tensor = None,
-             repeat_noise: bool = False,
-             temperature: float = 1.,
-             uncond_scale: float = 1.,
-             uncond_cond: Optional[torch.Tensor] = None,
-             skip_steps: int = 0):
-
-        y0 = self.g_a(x)
-        z = self.h_a(y0)
-        z_hat, z_likelihoods = self.entropy_bottleneck(z)
-
-        y_noise = torch.randn_like(y0)
-        time_steps = np.flip(self.time_steps)[skip_steps:]
-
-        for i, step in monit.enum('Sample', time_steps):
-            index = len(time_steps) - i - 1
-            ts = x.new_full((y0.shape[0],), step, dtype=torch.long)
-            y_prev, pred_y0, e_t = self.p_sample(y_noise, None, ts, step, index=index,
-                                                 repeat_noise=repeat_noise,
-                                                 temperature=temperature,
-                                                 uncond_scale=uncond_scale,
-                                                 uncond_cond=uncond_cond)
-
-        l1_loss = nn.L1Loss()
-        if noise is None:
-            noise = torch.randn_like(y0)
-        l1_loss(noise, e_t)
-
-        d = lpips.LPIPS(net='alex')
-        d = d.forward(pred_y0, y0)
-
-        return (1. - self.lo) * l1_loss + self.lo * d -  self.lamda * torch.mean(torch.log2(z_likelihoods))
-
-    @torch.no_grad()
-    def compress_test(self, x: torch.Tensor,
-                repeat_noise: bool = False,
-                temperature: float = 1.,
-                uncond_scale: float = 1.,
-                uncond_cond: Optional[torch.Tensor] = None,
-                skip_steps: int = 0):
-
-        with torch.no_grad():
-            y0 = self.g_a(x)
-            z = self.h_a(y0)
-
-            z_strings = self.entropy_bottleneck.compress(z)
-            z_hat = self.entropy_bottleneck.decompress(z_strings, z.size()[-2:])
-
-            y_noise = torch.randn_like(y0)
-            time_steps = np.flip(self.time_steps)[skip_steps:]
-
-            for i, step in monit.enum('Sample', time_steps):
-                index = len(time_steps) - i - 1
-                ts = x.new_full((y0.shape[0],), step, dtype=torch.long)
-                y_noise, pred_y0, e_t = self.p_sample(y_noise, None, ts, step, index=index,
-                                                      repeat_noise=repeat_noise,
-                                                      temperature=temperature,
-                                                      uncond_scale=uncond_scale,
-                                                      uncond_cond=uncond_cond)
-            x_hat = self.g_s(pred_y0).clamp(0, 1)
-            return x_hat
