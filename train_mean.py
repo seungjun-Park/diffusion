@@ -1,44 +1,17 @@
 import argparse
-import os
 import random
 import shutil
 import sys
-import glob
-from PIL import Image
-from pathlib import Path
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from torchvision import transforms
+from modules.image_dataset import CustomDataset
 
-from compressai.datasets import ImageFolder
 from compressai.losses import RateDistortionLoss
 from compressai.zoo import image_models
-
-class CustomDataset(Dataset):
-    def __init__(self, path, transform=None):
-        self.path = path
-
-        if not Path(self.path).is_dir():
-            raise RuntimeError(f'Invalid directory "{path}"')
-
-        self.phase_img_list = glob.glob(self.path + '/*.png')
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.phase_img_list)
-
-    def __getitem__(self, index):
-        img_path = self.phase_img_list[index]
-        img = Image.open(img_path).convert('L')
-
-        if self.transform is not None:
-            img = self.transform(img)
-
-        return img
 
 class AverageMeter:
     """Compute running average."""
@@ -365,9 +338,11 @@ def image_compress(path):
         state_dict = net.compress(x)
         x_hat = net.decompress(state_dict['strings'], state_dict['shape'])['x_hat']
         toImage = transforms.ToPILImage()
-        x_hat = toImage(torch.split(x_hat, [1,]))
+        x_hat = x_hat[0]
+        x_hat = toImage(x_hat)
 
-        x_hat.save(f"{path}/recon/0801_{i}.png")
+        x_hat.save(f"{path}/recon/{i}.png")
 
 if __name__ == "__main__":
-    image_compress("./data/phases")
+    main(sys.argv[1:])
+    #image_compress("./data/phases")

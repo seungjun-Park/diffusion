@@ -367,7 +367,8 @@ class MeanScaleHyperprior(ScaleHyperprior):
 
         return {
             "x_hat": x_hat,
-            "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
+            "likelihoods": {"y": y_likelihoods, "z": z_likelihoods },
+            "diffusion": {"y": y, "z": z}
         }
 
     def compress(self, x):
