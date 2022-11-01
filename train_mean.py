@@ -343,18 +343,31 @@ def image_compress(path):
     data_transform = transforms.Compose([
         transforms.ToTensor()
     ])
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     dataset = CustomDataset(path, transform=data_transform)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=1,
+        num_workers=4,
+        shuffle=False,
+        pin_memory=(device == "cuda"),
+    )
 
-    x = dataset[0]
-    net = image_models["mbt2018-mean"](quality=3)
-    state_dict = net.compress(x)
-    x_hat = net.decompress(state_dict)["x_hat"]
+    for i, x in enumerate(dataloader):
+        x = x.to(device)
+        net = image_models["mbt2018-mean"](quality=3)
+        net.to(device)
+        checkpoint = torch.load("./checkpoint.pth.tar", map_location=device)
+        net.load_state_dict(checkpoint["state_dict"])
+        if not net.update(force=True):
+            raise RuntimeError(f'Can not update CDF!')
 
-    x_hat = transforms.ToPILImage(x_hat)
-    if not Path(f"{path}/recon").is_dir():
-        os.mkdir(f"{path}/recon")
+        state_dict = net.compress(x)
+        x_hat = net.decompress(state_dict['strings'], state_dict['shape'])['x_hat']
+        toImage = transforms.ToPILImage()
+        x_hat = toImage(torch.split(x_hat, [1,]))
 
-    x_hat.save("f{path}/recon/0801.png")
+        x_hat.save(f"{path}/recon/0801_{i}.png")
 
 if __name__ == "__main__":
     image_compress("./data/phases")
