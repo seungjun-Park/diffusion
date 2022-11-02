@@ -6,7 +6,6 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 import numpy as np
 import os, time, logging
-import torch.utils.tensorboard as tb
 
 from compressai.zoo import image_models
 from modules.image_dataset import CustomDataset
@@ -46,24 +45,32 @@ def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_time
     assert betas.shape == (num_diffusion_timesteps,)
     return betas
 
-def main(path,
-         ch, out_ch, ch_mult,
-         num_res_blocks,
-         attn_resolutions,
-         dropout,
-         in_channels,
-         image_size,
-         resamp_with_conv,
-         timesteps=100,
-         model_type='bayesian',
-         use_ema=False,
-         resume_training=False,
-         ema_rate = 0.999,
-         epochs=100,
-         lr=0.0001, model_var_type='fixedsmall',
-         beta_schedule='linear', beta_start=0.0001, beta_end=0.02,
-         snapshot_freq=10
-         ):
+def train_model(path,
+                betas,
+                ch, out_ch, ch_mult,
+                num_res_blocks,
+                attn_resolutions,
+                dropout,
+                in_channels,
+                image_size,
+                resamp_with_conv,
+                timesteps=100,
+                model_type='bayesian',
+                use_ema=False,
+                resume_training=False,
+                ema_rate=0.999,
+                epochs=100,
+                lr=0.00002,
+                weight_decay=0.000,
+                beta1=0.9,
+                amsgrad=False,
+                eps=0.00000001,
+                snapshot_freq=10,
+                device=None
+                ):
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     train_transforms = transforms.Compose(
         [transforms.ToTensor()]
     )
@@ -75,9 +82,7 @@ def main(path,
     train_dataset = CustomDataset("./data/phases", transform=train_transforms)
     test_dataset = CustomDataset("./test/phases", transform=test_transforms)
 
-    tb_logger = tb.SummaryWriter(path)
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    #tb_logger = tb.SummaryWriter(path)
 
     train_dataloader = DataLoader(
         train_dataset,
@@ -96,38 +101,13 @@ def main(path,
     )
 
     net = image_models['mbt2018-mean'](quality=3)
-    #net = net.to(device)
+    net = net.to(device)
 
     checkpoint = torch.load("./checkpoint.pth.tar", map_location=device)
     net.load_state_dict(checkpoint["state_dict"])
 
     if not net.update(force=True):
         raise RuntimeError(f'Can not update CDF!')
-
-    betas = get_beta_schedule(
-        beta_schedule=beta_schedule,
-        beta_start=beta_start,
-        beta_end=beta_end,
-        num_diffusion_timesteps=timesteps
-    )
-    betas = torch.from_numpy(betas).float().to(device)
-    time_steps = betas.shape[0]
-
-    alphas = 1.0 - betas
-    alphas_cumprod = alphas.cumprod(dim=0)
-    alphas_cumprod_prev = torch.cat(
-        [torch.ones(1).to(device), alphas_cumprod[:-1]], dim=0
-    )
-    posterior_variance = (
-            betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
-    )
-
-    if model_var_type == "fixedlarge":
-        logvar = betas.log()
-        # torch.cat(
-        # [posterior_variance[1:2], betas[1:]], dim=0).log()
-    elif model_var_type == "fixedsmall":
-        logvar = posterior_variance.clamp(min=1e-20).log()
 
     eps_model = UNet(ch, out_ch, ch_mult,
          num_res_blocks,
@@ -138,9 +118,10 @@ def main(path,
          resamp_with_conv,
          timesteps,
          model_type=model_type)
-    eps_model.to(device)
+    eps_model = eps_model.to(device)
 
-    optimizer = optim.Adam(eps_model.parameters(), lr=lr)
+    optimizer = optim.Adam(eps_model.parameters(), lr=lr, weight_decay=weight_decay,
+                           betas=(beta1, 0.999), amsgrad=amsgrad, eps=eps)
 
     if use_ema:
         ema_helper = EMAHelper(mu=ema_rate)
@@ -153,7 +134,7 @@ def main(path,
         states = torch.load("./ckpt.pth")
         eps_model.load_state_dict(states[0])
 
-        states[1]["param_groups"][0]["eps"] = 0.00000001
+        states[1]["param_groups"][0]["eps"] = eps
         optimizer.load_state_dict(states[1])
         start_epoch = states[2]
         step = states[3]
@@ -164,13 +145,13 @@ def main(path,
         data_start = time.time()
         data_time = 0
         for i, x in enumerate(train_dataloader):
-            n = x.size(0)
             data_time += time.time() - data_start
             eps_model.train()
             step += 1
 
             x = x.to(device)
             y = net.g_a(x)
+            n = y.size(0)
             e = torch.randn_like(y)
             b = betas
 
@@ -181,11 +162,13 @@ def main(path,
             t = torch.cat([t, timesteps - t - 1], dim=0)[:n]
             loss = noise_estimation_loss(eps_model, y, t, e, b)
 
-            tb_logger.add_scalar("loss", loss, global_step=step)
+            #tb_logger.add_scalar("loss", loss, global_step=step)
 
             logging.info(
                 f"step: {step}, loss: {loss.item()}, data time: {data_time / (i + 1)}"
             )
+
+            print(f"step: {step}, loss: {loss.item()}, data time: {data_time / (i + 1)}")
 
             optimizer.zero_grad()
             loss.backward()
@@ -228,9 +211,15 @@ def sample_image(x,
                  in_channels,
                  image_size,
                  resamp_with_conv,
+                 betas,
+                 eta,
+                 num_timesteps,
                  timesteps=100,
                  model_type='bayesian',
-                 last=True):
+                 skip=1,
+                 last=True,
+                 sample_type='generalized',
+                 skip_type='uniform'):
     model = UNet(
                 ch, out_ch, ch_mult,
                 num_res_blocks,
@@ -240,20 +229,16 @@ def sample_image(x,
                 image_size,
                 resamp_with_conv,
                 timesteps=100,
-                model_type='bayesian')
-    try:
-        skip = self.args.skip
-    except Exception:
-        skip = 1
+                model_type=model_type)
 
-    if self.args.sample_type == "generalized":
-        if self.args.skip_type == "uniform":
-            skip = self.num_timesteps // self.args.timesteps
-            seq = range(0, self.num_timesteps, skip)
-        elif self.args.skip_type == "quad":
+    if sample_type == "generalized":
+        if skip_type == "uniform":
+            skip = num_timesteps // timesteps
+            seq = range(0, num_timesteps, skip)
+        elif skip_type == "quad":
             seq = (
                     np.linspace(
-                        0, np.sqrt(self.num_timesteps * 0.8), self.args.timesteps
+                        0, np.sqrt(num_timesteps * 0.8), timesteps
                     )
                     ** 2
             )
@@ -262,16 +247,16 @@ def sample_image(x,
             raise NotImplementedError
         from modules.ddim.denoising import generalized_steps
 
-        xs = generalized_steps(x, seq, model, self.betas, eta=self.args.eta)
+        xs = generalized_steps(x, seq, model, betas, eta=eta)
         x = xs
-    elif self.args.sample_type == "ddpm_noisy":
-        if self.args.skip_type == "uniform":
-            skip = self.num_timesteps // self.args.timesteps
-            seq = range(0, self.num_timesteps, skip)
-        elif self.args.skip_type == "quad":
+    elif sample_type == "ddpm_noisy":
+        if skip_type == "uniform":
+            skip = num_timesteps // timesteps
+            seq = range(0, num_timesteps, skip)
+        elif skip_type == "quad":
             seq = (
                     np.linspace(
-                        0, np.sqrt(self.num_timesteps * 0.8), self.args.timesteps
+                        0, np.sqrt(num_timesteps * 0.8), timesteps
                     )
                     ** 2
             )
@@ -336,6 +321,52 @@ def decompress(strings, shape):
     y_hat = sample_image(y_hat)
     x_hat = net.g_s(y_hat).clamp_(0, 1)
     return {"x_hat": x_hat}
+
+
+def main(path,
+         beta_schedule,
+         beta_start,
+         beta_end,
+         num_diffusion_timesteps,
+         model_var_type,
+         train=False):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    betas = get_beta_schedule(
+        beta_schedule=beta_schedule,
+        beta_start=beta_start,
+        beta_end=beta_end,
+        num_diffusion_timesteps=num_diffusion_timesteps
+    )
+    betas = torch.from_numpy(betas).float().to(device)
+    num_timesteps = betas.shape[0]
+
+    alphas = 1.0 - betas
+    alphas_cumprod = alphas.cumprod(dim=0)
+    alphas_cumprod_prev = torch.cat(
+        [torch.ones(1).to(device), alphas_cumprod[:-1]], dim=0
+    )
+    posterior_variance = (
+            betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+    )
+
+    if model_var_type == "fixedlarge":
+        logvar = betas.log()
+        # torch.cat(
+        # [posterior_variance[1:2], betas[1:]], dim=0).log()
+    elif model_var_type == "fixedsmall":
+        logvar = posterior_variance.clamp(min=1e-20).log()
+
+    if train:
+        train_model(path=path, betas=betas, in_channels=192, out_ch=192, ch=128, ch_mult=tuple([1, 1, 2, 2, 4, 4,]),
+                    num_res_blocks=2, attn_resolutions=[16, ], dropout=0.0, ema_rate=0.999, use_ema=True, image_size=2048, resamp_with_conv=True)
+   # else:
+        #sample_image()
+
+if __name__ == '__main__':
+    main(path='./',
+         beta_schedule='linear', beta_start=0.0001, beta_end=0.02,
+         num_diffusion_timesteps=1000, model_var_type='fixedsmall', train=True)
 
 
 

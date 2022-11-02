@@ -343,6 +343,39 @@ def image_compress(path):
 
         x_hat.save(f"{path}/recon/{i}.png")
 
+def test(path):
+    data_transform = transforms.Compose([
+        transforms.ToTensor()
+    ])
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    dataset = CustomDataset(path, transform=data_transform)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=1,
+        num_workers=4,
+        shuffle=False,
+        pin_memory=(device == "cuda"),
+    )
+
+    for i, x in enumerate(dataloader):
+        x = x.to(device)
+        net = image_models["mbt2018-mean"](quality=3)
+        net = net.to(device)
+        checkpoint = torch.load("./checkpoint.pth.tar", map_location=device)
+        net.load_state_dict(checkpoint["state_dict"])
+        if not net.update(force=True):
+            raise RuntimeError(f'Can not update CDF!')
+
+        y = net.g_a(x)
+        print(y.shape[2], y.shape[3])
+        z = net.h_a(y)
+        z_hat, z_likelihoods = net.entropy_bottleneck(z)
+        gaussian_params = net.h_s(z_hat)
+        scales_hat, means_hat = gaussian_params.chunk(2, 1)
+        y_hat, y_likelihoods = net.gaussian_conditional(y, scales_hat, means=means_hat)
+        x_hat = net.g_s(y_hat)
+
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    #main(sys.argv[1:])
     #image_compress("./data/phases")
+    test("./data/phases")
