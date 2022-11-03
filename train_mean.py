@@ -378,4 +378,4 @@ def test(path):
 if __name__ == "__main__":
     #main(sys.argv[1:])
     image_compress("./data/phases")
-    test("./data/phases")
+    #test("./data/phases")
