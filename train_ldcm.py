@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.transforms
 from torchvision import transforms
 from torch.utils.data import DataLoader
 import torch.optim as optim
@@ -54,7 +55,8 @@ def train_model(path,
                 in_channels,
                 image_size,
                 resamp_with_conv,
-                timesteps=100,
+                num_timesteps,
+                num_diffusion_timesteps,
                 model_type='bayesian',
                 use_ema=False,
                 resume_training=False,
@@ -116,7 +118,7 @@ def train_model(path,
          in_channels,
          image_size,
          resamp_with_conv,
-         timesteps,
+         num_diffusion_timesteps,
          model_type=model_type)
     eps_model = eps_model.to(device)
 
@@ -144,23 +146,24 @@ def train_model(path,
     for epoch in range(start_epoch, epochs):
         data_start = time.time()
         data_time = 0
+        step = 0
+        mean_loss= 0
         for i, x in enumerate(train_dataloader):
             data_time += time.time() - data_start
             eps_model.train()
             step += 1
 
             x = x.to(device)
-            y = net.g_a(x)
-            n = y.size(0)
-            e = torch.randn_like(y)
+            n = x.size(0)
+            e = torch.randn_like(x)
             b = betas
 
             # antithetic sampling
             t = torch.randint(
-                low=0, high=timesteps, size=(n // 2 + 1,)
+                low=0, high=num_timesteps, size=(n // 2 + 1,)
             ).to(device)
-            t = torch.cat([t, timesteps - t - 1], dim=0)[:n]
-            loss = noise_estimation_loss(eps_model, y, t, e, b)
+            t = torch.cat([t, num_timesteps - t - 1], dim=0)[:n]
+            loss = noise_estimation_loss(eps_model, x, t, e, b)
 
             #tb_logger.add_scalar("loss", loss, global_step=step)
 
@@ -168,7 +171,9 @@ def train_model(path,
                 f"step: {step}, loss: {loss.item()}, data time: {data_time / (i + 1)}"
             )
 
-            print(f"step: {step}, loss: {loss.item()}, data time: {data_time / (i + 1)}")
+            mean_loss += loss.item()
+
+            print(f"epoch: {epoch}, step: {step}, loss: {loss.item()}, data time: {data_time / (i + 1)}")
 
             optimizer.zero_grad()
             loss.backward()
@@ -194,11 +199,11 @@ def train_model(path,
                 if use_ema:
                     states.append(ema_helper.state_dict())
 
-                torch.save(
-                    states,
-                    os.path.join(path, "ckpt_{}.pth".format(step)),
-                )
-                torch.save(states, os.path.join(path, "ckpt.pth"))
+                # torch.save(
+                #     states,
+                #     os.path.join(path, "ckpt_{}.pth".format(step)),
+                # )
+                torch.save(states, os.path.join(path, "ckpt.pth.tar"))
 
             data_start = time.time()
 
@@ -211,25 +216,32 @@ def sample_image(x,
                  in_channels,
                  image_size,
                  resamp_with_conv,
+                 num_diffusion_timesteps,
                  betas,
-                 eta,
                  num_timesteps,
-                 timesteps=100,
+                 device,
+                 eta=0.0,
+                 timesteps=1000,
                  model_type='bayesian',
                  skip=1,
                  last=True,
                  sample_type='generalized',
                  skip_type='uniform'):
-    model = UNet(
-                ch, out_ch, ch_mult,
-                num_res_blocks,
-                attn_resolutions,
-                dropout,
-                in_channels,
-                image_size,
-                resamp_with_conv,
-                timesteps=100,
-                model_type=model_type)
+    x = torch.randn_like(x)
+    x.to(device)
+
+    model = UNet(ch, out_ch, ch_mult,
+         num_res_blocks,
+         attn_resolutions,
+         dropout,
+         in_channels,
+         image_size,
+         resamp_with_conv,
+         num_diffusion_timesteps,
+         model_type=model_type)
+    model = model.to(device)
+    checkpoint = torch.load("./ckpt.pth.tar", map_location=device)
+    model.load_state_dict(checkpoint[0])
 
     if sample_type == "generalized":
         if skip_type == "uniform":
@@ -247,7 +259,7 @@ def sample_image(x,
             raise NotImplementedError
         from modules.ddim.denoising import generalized_steps
 
-        xs = generalized_steps(x, seq, model, betas, eta=eta)
+        xs = generalized_steps(x, seq, model, betas, eta=eta, last=True)
         x = xs
     elif sample_type == "ddpm_noisy":
         if skip_type == "uniform":
@@ -273,11 +285,9 @@ def sample_image(x,
     return x
 
 
-def compress(x):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+def compress(x, device):
     net = image_models['mbt2018-mean'](quality=3)
-    # net = net.to(device)
+    net = net.to(device)
 
     checkpoint = torch.load("./checkpoint.pth.tar", map_location=device)
     net.load_state_dict(checkpoint["state_dict"])
@@ -286,8 +296,7 @@ def compress(x):
         raise RuntimeError(f'Can not update CDF!')
 
     y = net.g_a(x)
-    y_noise = torch.randn_like(y)
-    z = net.h_a(y_noise)
+    z = net.h_a(y)
 
     z_strings = net.entropy_bottleneck.compress(z)
     z_hat = net.entropy_bottleneck.decompress(z_strings, z.size()[-2:])
@@ -295,14 +304,12 @@ def compress(x):
     gaussian_params = net.h_s(z_hat)
     scales_hat, means_hat = gaussian_params.chunk(2, 1)
     indexes = net.gaussian_conditional.build_indexes(scales_hat)
-    y_strings = net.gaussian_conditional.compress(y_noise, indexes, means=means_hat)
+    y_strings = net.gaussian_conditional.compress(y, indexes, means=means_hat)
     return {"strings": [y_strings, z_strings], "shape": z.size()[-2:]}
 
-def decompress(strings, shape):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+def decompress(strings, shape, betas, num_diffusion_timesteps, num_timestpes, device):
     net = image_models['mbt2018-mean'](quality=3)
-    # net = net.to(device)
+    net = net.to(device)
 
     checkpoint = torch.load("./checkpoint.pth.tar", map_location=device)
     net.load_state_dict(checkpoint["state_dict"])
@@ -318,10 +325,40 @@ def decompress(strings, shape):
     y_hat = net.gaussian_conditional.decompress(
          strings[0], indexes, means=means_hat
     )
-    y_hat = sample_image(y_hat)
-    x_hat = net.g_s(y_hat).clamp_(0, 1)
+    y_noise = sample_image(y_hat,
+                         betas=betas, in_channels=192, out_ch=192, ch=128,
+                         ch_mult=tuple([1, 1, 2, 2, 4, 4, ]),
+                         num_res_blocks=2, attn_resolutions=[16, ], dropout=0.0,
+                         image_size=2048, resamp_with_conv=True,
+                         num_diffusion_timesteps=num_diffusion_timesteps, skip=20, num_timesteps=num_timestpes, device=device)
+    y_noise = y_noise.to(device)
+
+    x_hat = net.g_s(y_noise).clamp_(0, 1)
     return {"x_hat": x_hat}
 
+def image_recon(path, betas, num_timesteps, num_diffusion_timsteps, device):
+    data_transform = transforms.Compose([
+        transforms.ToTensor()
+    ])
+    dataset = CustomDataset("./data/phases", transform=data_transform)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=1,
+        num_workers=4,
+        shuffle=False,
+        pin_memory=(device == "cuda"),
+    )
+
+    for i, x in enumerate(dataloader):
+        x = x.to(device)
+
+        state_dict = compress(x, device)
+        x_hat = decompress(state_dict['strings'], state_dict['shape'], betas, num_diffusion_timsteps, num_timesteps, device)['x_hat']
+        toImage = transforms.ToPILImage()
+        x_hat = x_hat[0]
+        x_hat = toImage(x_hat)
+
+        x_hat.save(f"{path}/recon/{i}.png")
 
 def main(path,
          beta_schedule,
@@ -358,10 +395,12 @@ def main(path,
         logvar = posterior_variance.clamp(min=1e-20).log()
 
     if train:
-        train_model(path=path, betas=betas, in_channels=192, out_ch=192, ch=128, ch_mult=tuple([1, 1, 2, 2, 4, 4,]),
-                    num_res_blocks=2, attn_resolutions=[16, ], dropout=0.0, ema_rate=0.999, use_ema=True, image_size=2048, resamp_with_conv=True)
-   # else:
-        #sample_image()
+        train_model(path=path, betas=betas, in_channels=1, out_ch=1, ch=128, ch_mult=tuple([1, 1, 2, 2, 4, 4,]),
+                    num_res_blocks=2, attn_resolutions=[16, ], dropout=0.0, ema_rate=0.999, use_ema=True, image_size=2048, resamp_with_conv=True, num_timesteps=num_timesteps,
+                    num_diffusion_timesteps=num_diffusion_timesteps, device=device)
+
+    else:
+        image_recon(path, betas, num_timesteps, num_diffusion_timesteps, device)
 
 if __name__ == '__main__':
     main(path='./',
