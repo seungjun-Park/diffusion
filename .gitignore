@@ -129,3 +129,4 @@ dmypy.json
 .pyre/
 *.0
 logs/
+neural-holography/
