@@ -326,15 +326,15 @@ def image_compress(path):
         pin_memory=(device == "cuda"),
     )
 
+    net = image_models["mbt2018-mean"](quality=3)
+    net.to(device)
+    checkpoint = torch.load("./checkpoint.pth.tar", map_location=device)
+    net.load_state_dict(checkpoint["state_dict"])
+    if not net.update(force=True):
+        raise RuntimeError(f'Can not update CDF!')
+
     for i, x in enumerate(dataloader):
         x = x.to(device)
-        net = image_models["mbt2018-mean"](quality=3)
-        net.to(device)
-        checkpoint = torch.load("./checkpoint.pth.tar", map_location=device)
-        net.load_state_dict(checkpoint["state_dict"])
-        if not net.update(force=True):
-            raise RuntimeError(f'Can not update CDF!')
-
         state_dict = net.compress(x)
         x_hat = net.decompress(state_dict['strings'], state_dict['shape'])['x_hat']
         toImage = transforms.ToPILImage()
