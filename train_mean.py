@@ -8,7 +8,6 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from modules.image_dataset import CustomDataset
 
 from compressai.losses import RateDistortionLoss
 from compressai.zoo import image_models

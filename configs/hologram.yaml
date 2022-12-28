@@ -1,5 +1,5 @@
 diffusion:
-  model: model.diffusion.ldcm.LDCM
+  model: models.diffusion.ldcm.LDCM
   base_learning_rate: 2.0e-6
   params:
     linear_start: 0.0015
@@ -11,6 +11,12 @@ diffusion:
     image_size: 64
     channels: 3
     monitor: val/loss_simple_ema
+
+compress:
+  model: models.vae.compress.MeanScaleHyperprior
+  channel: 1
+  N: 128
+  M: 256
 
 unet:
   model: utils.CUNet.CUNet

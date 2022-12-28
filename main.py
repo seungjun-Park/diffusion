@@ -3,6 +3,8 @@ import argparse
 from omegaconf import OmegaConf
 from pytorch_lightning.trainer import Trainer
 
+import importlib
+
 def get_parser(**parser_kwargs):
 
     arg_parser = argparse.ArgumentParser(**parser_kwargs)
@@ -25,4 +27,8 @@ if __name__ == "__main__":
     cli = OmegaConf.from_dotlist(unknown)
     config = OmegaConf.merge(*config, cli)
 
-    print(config.diffusion.params.linear_start)
+    module_name, model_name = config.compress.model.rsplit(".", 1)
+
+    model = getattr(importlib.import_module(module_name, package=None), model_name)(config.compress)
+
+    print(model)

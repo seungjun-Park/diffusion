@@ -75,6 +75,16 @@ def count_params(model, verbose=False):
     return total_params
 
 
+def get_model(config, reload = False):
+    if not "model" in config:
+        raise KeyError("Expected key 'model' to load specify model.")
+    module, model = config.model.rsplit('.', 1)
+    if reload:
+        module_imp = importlib.import_module(module)
+        importlib.reload(module_imp)
+    return getattr(importlib.import_module(module), model)(config)
+
+
 def instantiate_from_config(config):
     if not "target" in config:
         if config == '__is_first_stage__':
