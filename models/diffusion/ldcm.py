@@ -3,14 +3,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import pytorch_lightning as pl
+from pytorch_lightning.utilities.distributed import rank_zero_only
 from torch.optim.lr_scheduler import LambdaLR
+from functools import partial
 
 from modules.ema import LitEma
+from modules.diffusionmodules.util import make_beta_schedule
 from util import get_model, instantiate_from_config, count_params, default
 from ddpm import DiffusionWrapper
 
 class LDCM(pl.LightningModule):
-    def __init__(self, config):
+    def __init__(self,
+                 config,
+                 ignore_keys = [],
+                 ):
         super(LDCM, self).__init__()
 
         if not "compress" in config:
@@ -28,12 +34,12 @@ class LDCM(pl.LightningModule):
         self.cond_stage_model = None
         self.clip_denoised = config.clip_denoised
         self.log_every_t = config.log_evry_t
-        self.first_stage_key = first_state_key
+        self.first_stage_key = config.first_state_key
         self.image_size = config.image_size
         self.channels = config.channels
         self.use_positional_encodings = config.use_positional_encodings
 
-        self.unet_model = DiffusionWrapper(config.unet, conditioning_key)
+        self.unet_model = DiffusionWrapper(config.unet, config.conditioning_key)
         count_params(self.unet_model, verbose=True)
 
         self.use_ema = config.use_ema
@@ -133,6 +139,23 @@ class LDCM(pl.LightningModule):
         lvlb_weights[0] = lvlb_weights[1]
         self.register_buffer('lvlb_weights', lvlb_weights, persistent=False)
         assert not torch.isnan(self.lvlb_weights).all()
+
+    @rank_zero_only
+    @torch.no_grad()
+    def on_train_batch_start(self, batch, batch_idx, dataloader_idx):
+        # only for very first batch
+        if self.scale_by_std and self.current_epoch == 0 and self.global_step == 0 and batch_idx == 0 and not self.restarted_from_ckpt:
+            assert self.scale_factor == 1., 'rather not use custom rescaling and std-rescaling simultaneously'
+            # set rescale weight to 1./std of encodings
+            print("### USING STD-RESCALING ###")
+            x = super().get_input(batch, self.first_stage_key)
+            x = x.to(self.device)
+            encoder_posterior = self.encode_first_stage(x)
+            z = self.get_first_stage_encoding(encoder_posterior).detach()
+            del self.scale_factor
+            self.register_buffer('scale_factor', 1. / z.flatten().std())
+            print(f"setting self.scale_factor to {self.scale_factor}")
+            print("### USING STD-RESCALING ###")
 
 
     def training_step(self, batch, batch_idx):

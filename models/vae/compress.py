@@ -14,7 +14,7 @@ from compressai.registry import register_model
 from compressai.models.utils import conv, deconv, update_registered_buffers
 
 
-class CompressionModel(nn.Module):
+class CompressionModel(pl.LightningModule):
     """Base class for constructing an auto-encoder with at least one entropy
     bottleneck module.
 
@@ -32,6 +32,11 @@ class CompressionModel(nn.Module):
                 "init_weights was removed as it was never functional",
                 DeprecationWarning,
             )
+
+    def training_step(self, batch, batch_idx):
+        loss = self()
+
+        return loss
 
     def aux_loss(self):
         """Return the aggregated loss over the auxiliary entropy bottleneck
