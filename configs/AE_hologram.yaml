@@ -1,5 +1,5 @@
 diffusion:
-  model: models.diffusion.ldcm.LDCM
+  module: models.diffusion.ldcm.LDCM
   base_learning_rate: 2.0e-6
   params:
     linear_start: 0.0015
@@ -12,14 +12,25 @@ diffusion:
     channels: 3
     monitor: val/loss_simple_ema
 
+data:
+  train:
+    module: modules.dataset.hologram.HologramDataset
+    path: './data/train/'
+    file_format: '*.png'
+
+  test:
+    module: modules.dataset.hologram.HologramDataset
+    path: './data/test/'
+    file_format: '*.png'
+
 compress:
-  model: models.vae.compress.MeanScaleHyperprior
+  module: models.vae.compress.MeanScaleHyperprior
   channel: 1
   N: 128
   M: 256
 
 unet:
-  model: utils.CUNet.CUNet
+  module: utils.CUNet.CUNet
   image_size: 256
   in_channels: 3
   out_channels: 3
@@ -36,8 +47,6 @@ unet:
   - 4
   num_head_channels: 32
 
-compression:
-  model:
 
 
 
