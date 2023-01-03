@@ -75,14 +75,14 @@ def count_params(model, verbose=False):
     return total_params
 
 
-def get_model(config, reload = False):
-    if not "model" in config:
-        raise KeyError("Expected key 'model' to load specify model.")
-    module, model = config.model.rsplit('.', 1)
+def get_module(config, reload = False):
+    if not "module" in config:
+        raise KeyError("Expected key 'module' to load specific class.")
+    module_path, module_class = config.module.rsplit('.', 1)
     if reload:
-        module_imp = importlib.import_module(module)
+        module_imp = importlib.import_module(module_path)
         importlib.reload(module_imp)
-    return getattr(importlib.import_module(module), model)(config)
+    return getattr(importlib.import_module(module_path), module_class)(config)
 
 
 def instantiate_from_config(config):
