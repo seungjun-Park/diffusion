@@ -24,23 +24,33 @@ model:
       dropout: 0.0
 
 data:
-  wrap: True
-  batch_size: 12
-  image_size: 512
-  train:
-    module: modules.dataset.hologram.HologramDataset
-    path: './data/train/'
-    file_format: '*.png'
-
-  test:
-    module: modules.dataset.hologram.HologramDataset
-    path: './data/test/'
-    file_format: '*.png'
+  target: modules.dataset.util.DataModuleFromConfig
+  params:
+    batch_size: 12
+    wrap: True
+    train:
+      target: modules.dataset.hologram.HologramDataset
+      params:
+        path: './data/train/'
+        file_format: '*.png'
+        size: 512
+    test:
+      target: modules.dataset.hologram.HologramDataset
+      params:
+        path: './data/test/'
+        file_format: '*.png'
+        size: 512
+    validation:
+      target: modules.dataset.hologram.HologramDataset
+      params:
+        path: './data/validation/'
+        file_format: '*.png'
+        size: 512
 
 lightning:
   callbacks:
     image_logger:
-      target: main.ImageLogger
+      target: modules.log.logger.ImageLogger
       params:
         batch_frequency: 1000
         max_images: 8

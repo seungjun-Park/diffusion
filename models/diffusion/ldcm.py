@@ -3,13 +3,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import pytorch_lightning as pl
+from einops import rearrange
 from pytorch_lightning.utilities.distributed import rank_zero_only
 from torch.optim.lr_scheduler import LambdaLR
 from functools import partial
 
 from modules.ema import LitEma
-from modules.diffusionmodules.util import make_beta_schedule
-from util import get_model, instantiate_from_config, count_params, default
+from modules.diffusionmodules.util import make_beta_schedule, extract_into_tensor
+from util import get_module, instantiate_from_config, count_params, default
 from ddpm import DiffusionWrapper
 
 class LDCM(pl.LightningModule):
@@ -25,7 +26,7 @@ class LDCM(pl.LightningModule):
         if not "unet" in config:
             raise   KeyError("Expected key 'unet' to load unet model.")
 
-        self.compression_model = get_model(config.compress)
+        self.compression_model = get_module(config.compress)
 
         assert config.parameterization in ["eps", "x0"], 'currently only supporting "eps" and "x0"'
         self.parameterization = config.parameterization

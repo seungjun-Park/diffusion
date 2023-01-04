@@ -5,11 +5,12 @@ import numpy as np
 from torch.utils.data import Dataset
 from torchvision import transforms
 class HologramDataset(Dataset):
-    def __init__(self, config=None):
-        assert not config is None
+    def __init__(self, path=None, file_format=None, size=None):
+        assert not (path is None or file_format is None or size is None)
         super().__init__()
-        self.data_path = config.path
-        self.file_format = config.file_format
+        self.image_size = size
+        self.data_path = path
+        self.file_format = file_format
         self.data_names = glob.glob(self.data_path + self.file_format)
         self.data_list = list()
         self.transform = transforms.Compose(

@@ -74,17 +74,6 @@ def count_params(model, verbose=False):
         print(f"{model.__class__.__name__} has {total_params * 1.e-6:.2f} M params.")
     return total_params
 
-
-def get_module(config, reload = False):
-    if not "module" in config:
-        raise KeyError("Expected key 'module' to load specific class.")
-    module_path, module_class = config.module.rsplit('.', 1)
-    if reload:
-        module_imp = importlib.import_module(module_path)
-        importlib.reload(module_imp)
-    return getattr(importlib.import_module(module_path), module_class)(config)
-
-
 def instantiate_from_config(config):
     if not "target" in config:
         if config == '__is_first_stage__':
