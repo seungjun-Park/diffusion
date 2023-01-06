@@ -1,7 +1,9 @@
 import argparse
-import os, sys, glob, datetime
+import os, sys, glob, datetime, math
 
 import torch
+from torch import nn
+import torch.nn.functional as F
 import pytorch_lightning as pl
 from packaging import version
 
@@ -54,6 +56,28 @@ def get_parser(**parser_kwargs):
 
     return parser
 
+class RateDistortionLoss(nn.Module):
+    """Custom rate distortion loss with a Lagrangian parameter."""
+
+    def __init__(self, lmbda=1e-2):
+        super().__init__()
+        self.mse = nn.MSELoss()
+        self.lmbda = lmbda
+
+    def forward(self, output, target):
+        N, _, H, W = target.size()
+        out = {}
+        num_pixels = N * H * W
+
+        out["bpp_loss"] = sum(
+            (torch.log(likelihoods).sum() / (-math.log(2) * num_pixels))
+            for likelihoods in output["likelihoods"].values()
+        )
+        out["mse_loss"] = self.mse(output["x_hat"], target)
+        out["loss"] = self.lmbda * 255**2 * out["mse_loss"] + out["bpp_loss"]
+
+        return out
+
 class Wrapper(pl.LightningModule):
     def __int__(self, config):
         super().__int__()
@@ -62,13 +86,29 @@ class Wrapper(pl.LightningModule):
         self.learning_rate = config.learning_rate
         self.aux_learning_rate = config.aux_learning_rate
         self.automatic_optimization = False
+        self.clip_max_norm = 1.0
     def training_Step(self, batch, batch_idx):
-        x = batch
-        out = self.compression_model(x)
-        opt = self.optimizers()
-        opt[0].zero_grad()
+        optimizer, aux_optimizer = self.optimizers()
+        lr_scheduler = self.lr_schedulers()
 
-        opt[0].step()
+        x = batch
+        optimizer.zero_grad()
+        aux_optimizer.zero_grad()
+
+        out = self.compression_model(x)
+
+        out_criterion = self.criterion(out, x)
+        out_criterion["loss"].backward()
+        if self.clip_max_norm > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), self.clip_max_norm)
+        optimizer.step()
+
+        aux_loss = model.aux_loss()
+        aux_loss.backward()
+        aux_optimizer.step()
+
+
+        lr_scheduler.step()
 
     def configure_optimizers(self):
         parameters = {
