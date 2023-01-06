@@ -200,3 +200,15 @@ def parallel_data_prefetch(
         return out
     else:
         return gather_res
+
+True_set = ('yes', 'true', 't', 'y', '1')
+False_set = ('no', 'false', 'f', 'n', '0')
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in True_set:
+        return True
+    elif v.lower() in False_set:
+        return False
+    else:
+        raise ValueError("Boolean value expected.")
