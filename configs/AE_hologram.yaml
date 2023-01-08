@@ -1,20 +1,24 @@
-model:
-  base_learning_rate: 1e-4
-  target: models.vae.compress.MeanScaleHyperprior
+module:
+  target: main.Wrapper
   params:
-    ch: 1
-    M: 128
-    N: 192
+    learning_rate: 1e-4
+    aux_learning_rate: 1e-4
+    compression:
+      target: models.vae.compress.MeanScaleHyperprior
+      params:
+        ch: 1
+        N: 128
+        M: 192
 
-criterion:
-  target: main.RateDistortionLoss
-  params:
-    lmbda: 1e-2
+    criterion:
+      target: main.RateDistortionLoss
+      params:
+        lmbda: 1e-2
 
 data:
   target: modules.dataset.util.DataModuleFromConfig
   params:
-    batch_size: 12
+    batch_size: 1
     wrap: True
     train:
       target: modules.dataset.hologram.HologramDataset
@@ -26,12 +30,6 @@ data:
       target: modules.dataset.hologram.HologramDataset
       params:
         path: './data/test/'
-        file_format: '*.png'
-        size: 512
-    validation:
-      target: modules.dataset.hologram.HologramDataset
-      params:
-        path: './data/validation/'
         file_format: '*.png'
         size: 512
 

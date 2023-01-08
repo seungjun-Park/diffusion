@@ -302,11 +302,8 @@ class MeanScaleHyperprior(ScaleHyperprior):
             encoder and last layer of the hyperprior decoder)
     """
 
-    def __init__(self, config, **kwargs):
-        super().__init__(config.channel, config.N, config.M, **kwargs)
-
-        N = config.N
-        M = config.M
+    def __init__(self, ch, N, M, **kwargs):
+        super().__init__(ch, N, M, **kwargs)
 
         self.h_a = nn.Sequential(
             conv(M, N, stride=1, kernel_size=3),

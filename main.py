@@ -16,6 +16,7 @@ from util import instantiate_from_config, str2bool
 
 import matplotlib.pyplot as plt
 
+
 def get_parser(**parser_kwargs):
     parser = argparse.ArgumentParser(**parser_kwargs)
 
@@ -25,36 +26,27 @@ def get_parser(**parser_kwargs):
         nargs="*",
         metavar="base_config.yaml",
         help='path to base configs. Loaded from left-to-right. '
-              'Parameters can be oeverwritten or added with command-line options of the form "--key value".',
+             'Parameters can be oeverwritten or added with command-line options of the form "--key value".',
         default=list(),
     )
 
-    parser.add_argument(
-        '-s',
-        '--seed',
-        type=int,
-        default=23,
-        help='seed for seed_everything'
-    )
-
-    parser.add_argument(
-        '-l',
-        '--logdir',
-        type=str,
-        default='logs',
-        help='directory for logging dat shift',
-    )
-
-    parser.add_argument(
-        '--scale_lr',
-        type=str2bool,
-        nargs='?',
-        const=True,
-        default=True,
-        help='scale base-lr by ngpu * batch_size * n_accumulate',
-    )
-
     return parser
+
+class AverageMeter:
+    """Compute running average."""
+
+    def __init__(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
 
 class RateDistortionLoss(nn.Module):
     """Custom rate distortion loss with a Lagrangian parameter."""
@@ -74,24 +66,26 @@ class RateDistortionLoss(nn.Module):
             for likelihoods in output["likelihoods"].values()
         )
         out["mse_loss"] = self.mse(output["x_hat"], target)
-        out["loss"] = self.lmbda * 255**2 * out["mse_loss"] + out["bpp_loss"]
+        out["loss"] = self.lmbda * 255 ** 2 * out["mse_loss"] + out["bpp_loss"]
 
         return out
 
+
 class Wrapper(pl.LightningModule):
-    def __int__(self, config):
-        super().__int__()
-        self.compression_model = instantiate_from_config(config.model)
-        self.criterion = instantiate_from_config(config.criterion)
-        self.learning_rate = config.learning_rate
-        self.aux_learning_rate = config.aux_learning_rate
+    def __init__(self, compression, criterion, learning_rate, aux_learning_rate):
+        super().__init__()
+        self.compression_model = instantiate_from_config(compression)
+        self.criterion = instantiate_from_config(criterion)
         self.automatic_optimization = False
         self.clip_max_norm = 1.0
-    def training_Step(self, batch, batch_idx):
+        self.lr = learning_rate
+        self.aux_lr = aux_learning_rate
+
+    def training_step(self, batch, batch_idx):
         optimizer, aux_optimizer = self.optimizers()
-        lr_scheduler = self.lr_schedulers()
 
         x = batch
+
         optimizer.zero_grad()
         aux_optimizer.zero_grad()
 
@@ -100,15 +94,19 @@ class Wrapper(pl.LightningModule):
         out_criterion = self.criterion(out, x)
         out_criterion["loss"].backward()
         if self.clip_max_norm > 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), self.clip_max_norm)
+            torch.nn.utils.clip_grad_norm_(self.compression_model.parameters(), self.clip_max_norm)
         optimizer.step()
 
-        aux_loss = model.aux_loss()
+        aux_loss = self.compression_model.aux_loss()
         aux_loss.backward()
         aux_optimizer.step()
 
+    def test_step(self, batch, batch_idx):
+        x = batch
 
-        lr_scheduler.step()
+        out = self.compression_model(x)
+        out_criterion = self.criterion(out, x)
+
 
     def configure_optimizers(self):
         parameters = {
@@ -132,15 +130,18 @@ class Wrapper(pl.LightningModule):
 
         optimizer = optim.Adam(
             (params_dict[n] for n in sorted(parameters)),
-            lr=self.learning_rate,
+            lr=self.lr,
         )
         aux_optimizer = optim.Adam(
             (params_dict[n] for n in sorted(aux_parameters)),
-            lr=self.aux_learning_rate,
+            lr=self.aux_lr,
         )
         return (
             {'optimizer': optimizer,
-             'lr_scheduler': optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')},
+             'lr_scheduler':
+                 {'scheduler': optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min'),
+                  'monitor': 'val_loss'
+                  }},
             {'optimizer': aux_optimizer}
         )
 
@@ -165,14 +166,10 @@ if __name__ == "__main__":
     # NOTE according to https://pytorch-lightning.readthedocs.io/en/latest/datamodules.html
     # calling these ourselves should not be necessary but it is.
     # lightning still takes care of proper multiprocessing though
-    data.prepare_data()
-    data.setup()
-    print("#### Data #####")
-    for k in data.datasets:
-        print(f"{k}, {data.datasets[k].__class__.__name__}, {len(data.datasets[k])}")
 
     # model
-    model = instantiate_from_config(config.model)
+    model = instantiate_from_config(config.module)
 
-    trainer = Trainer(accelerator='gpu')
+    tensorboard =
+    trainer = Trainer(accelerator='gpu', max_epochs=100, logger=)
     trainer.fit(model=model, datamodule=data)
